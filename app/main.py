@@ -1,11 +1,10 @@
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, status
-from sqlalchemy import select
-from app.core.dependencies import get_current_user
 from fastapi import Depends, FastAPI, HTTPException, status
+from sqlalchemy import select
 
+from app.core.dependencies import get_current_user
 from app.core.security import (
     create_access_token,
     hash_password,
@@ -14,6 +13,7 @@ from app.core.security import (
 from app.db.database import SessionLocal
 from app.models.enums import UserRole
 from app.models.user import User
+from app.routers.tickets import router as tickets_router
 from app.schemas.user import (
     TokenResponse,
     UserCreate,
@@ -34,6 +34,9 @@ app = FastAPI(
     title="BUG TRACKER V1",
     version="1.0.0",
 )
+
+
+app.include_router(tickets_router)
 
 
 @app.get("/")
@@ -60,8 +63,6 @@ def register_user(user_data: UserCreate):
 
     email_domain = email.rsplit("@", 1)[1]
 
-    # Internal users must use the company email.
-    # Clients can use any valid email domain.
     if (
         user_data.role != UserRole.CLIENT
         and email_domain != COMPANY_EMAIL_DOMAIN
@@ -145,7 +146,11 @@ def login_user(user_data: UserLogin):
     finally:
         db.close()
 
-@app.get("/users/me", response_model=UserResponse)
+
+@app.get(
+    "/users/me",
+    response_model=UserResponse,
+)
 def get_me(
     current_user: User = Depends(get_current_user),
 ):
