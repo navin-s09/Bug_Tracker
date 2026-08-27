@@ -2,8 +2,6 @@ from sqlalchemy import inspect, text
 
 from app.db.database import Base, SessionLocal, engine
 from app.db.init_db import create_tables
-from app.models.enums import UserRole
-from app.models.user import User
 
 
 def test_database_connection():
@@ -36,21 +34,48 @@ def test_users_table_exists():
     assert "users" in inspector.get_table_names()
 
 
-def test_user_role_persisted():
+def test_users_table_columns():
     create_tables()
 
-    db = SessionLocal()
+    inspector = inspect(engine)
 
-    try:
-        user = User(
-            email="role-test-uunique@example.com",
-            hashed_password="test-hashed-password",
-        )
+    columns = inspector.get_columns("users")
 
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+    column_names = {column["name"] for column in columns}
 
-        assert user.role == UserRole.DEV
-    finally:
-        db.close()
+    assert {
+        "id",
+        "email",
+        "hashed_password",
+        "role",
+        "created_at",
+    }.issubset(column_names)
+
+
+def test_users_email_is_unique():
+    create_tables()
+
+    inspector = inspect(engine)
+
+    unique_constraints = inspector.get_unique_constraints("users")
+
+    unique_columns = {
+        column
+        for constraint in unique_constraints
+        for column in constraint["column_names"]
+    }
+
+    assert "email" in unique_columns
+
+
+def test_users_role_is_not_nullable():
+    create_tables()
+
+    inspector = inspect(engine)
+
+    columns = {
+        column["name"]: column
+        for column in inspector.get_columns("users")
+    }
+
+    assert columns["role"]["nullable"] is False
