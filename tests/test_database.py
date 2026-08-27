@@ -2,6 +2,8 @@ from sqlalchemy import inspect, text
 
 from app.db.database import Base, SessionLocal, engine
 from app.db.init_db import create_tables
+from app.models.enums import UserRole
+from app.models.user import User
 
 
 def test_database_connection():
@@ -32,3 +34,23 @@ def test_users_table_exists():
     inspector = inspect(engine)
 
     assert "users" in inspector.get_table_names()
+
+
+def test_user_role_persisted():
+    create_tables()
+
+    db = SessionLocal()
+
+    try:
+        user = User(
+            email="role-test-uunique@example.com",
+            hashed_password="test-hashed-password",
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        assert user.role == UserRole.DEV
+    finally:
+        db.close()
