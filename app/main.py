@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -12,7 +13,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.db.database import SessionLocal
+from app.db.database import SessionLocal, init_db
 from app.models.enums import UserRole
 from app.models.user import User
 from app.routers.tickets import router as tickets_router
@@ -24,12 +25,25 @@ from app.schemas.user import (
 )
 
 
+# --------------------------------------------------
+# Environment configuration
+# --------------------------------------------------
+
 load_dotenv()
+
+
+# --------------------------------------------------
+# Logging configuration
+# --------------------------------------------------
 
 setup_logging()
 
 logger = logging.getLogger(__name__)
 
+
+# --------------------------------------------------
+# Application configuration
+# --------------------------------------------------
 
 COMPANY_EMAIL_DOMAIN = os.getenv(
     "COMPANY_EMAIL_DOMAIN",
@@ -37,14 +51,75 @@ COMPANY_EMAIL_DOMAIN = os.getenv(
 ).lower()
 
 
+# --------------------------------------------------
+# Database initialization
+# --------------------------------------------------
+
+def initialize_database():
+    """
+    Initialize the database tables.
+
+    SQLAlchemy creates tables that do not already exist.
+    Existing tables are not modified or deleted.
+    """
+
+    logger.info("Starting database initialization")
+
+    try:
+        init_db()
+
+        logger.info(
+            "Database initialization completed successfully"
+        )
+
+    except Exception:
+        logger.exception(
+            "Database initialization failed"
+        )
+
+        raise
+
+
+# --------------------------------------------------
+# FastAPI lifespan
+# --------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application startup and shutdown lifecycle.
+
+    Database initialization runs when the application starts.
+    """
+
+    initialize_database()
+
+    yield
+
+    logger.info("Application shutdown completed")
+
+
+# --------------------------------------------------
+# FastAPI application
+# --------------------------------------------------
+
 app = FastAPI(
     title="BUG TRACKER V1",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 
+# --------------------------------------------------
+# Routers
+# --------------------------------------------------
+
 app.include_router(tickets_router)
 
+
+# --------------------------------------------------
+# Root endpoint
+# --------------------------------------------------
 
 @app.get("/")
 def root():
@@ -55,6 +130,10 @@ def root():
     }
 
 
+# --------------------------------------------------
+# Health check
+# --------------------------------------------------
+
 @app.get("/health")
 def health_check():
     logger.info("Health check requested")
@@ -64,39 +143,59 @@ def health_check():
     }
 
 
+# --------------------------------------------------
+# User registration
+# --------------------------------------------------
+
 @app.post(
     "/users/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def register_user(user_data: UserCreate):
+
     email = user_data.email.strip().lower()
 
     email_domain = email.rsplit("@", 1)[1]
+
+    # --------------------------------------------------
+    # Validate company email for internal users
+    # --------------------------------------------------
 
     if (
         user_data.role != UserRole.CLIENT
         and email_domain != COMPANY_EMAIL_DOMAIN
     ):
         logger.warning(
-            "Registration rejected: invalid company email domain"
+            "Registration rejected: "
+            "invalid company email domain"
         )
 
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Internal users must use a company email address",
+            detail=(
+                "Internal users must use a "
+                "company email address"
+            ),
         )
 
     db = SessionLocal()
 
     try:
+
+        # --------------------------------------------------
+        # Check whether user already exists
+        # --------------------------------------------------
+
         existing_user = db.scalar(
             select(User).where(User.email == email)
         )
 
         if existing_user:
+
             logger.warning(
-                "Registration rejected: email already registered: %s",
+                "Registration rejected: "
+                "email already registered: %s",
                 email,
             )
 
@@ -105,18 +204,27 @@ def register_user(user_data: UserCreate):
                 detail="Email already registered",
             )
 
+        # --------------------------------------------------
+        # Create new user
+        # --------------------------------------------------
+
         new_user = User(
             email=email,
-            hashed_password=hash_password(user_data.password),
+            hashed_password=hash_password(
+                user_data.password
+            ),
             role=user_data.role,
         )
 
         db.add(new_user)
+
         db.commit()
+
         db.refresh(new_user)
 
         logger.info(
-            "User registered successfully: user_id=%s role=%s",
+            "User registered successfully: "
+            "user_id=%s role=%s",
             new_user.id,
             new_user.role.value,
         )
@@ -127,21 +235,32 @@ def register_user(user_data: UserCreate):
         db.close()
 
 
+# --------------------------------------------------
+# User login
+# --------------------------------------------------
+
 @app.post(
     "/auth/login",
     response_model=TokenResponse,
 )
 def login_user(user_data: UserLogin):
+
     email = user_data.email.strip().lower()
 
     db = SessionLocal()
 
     try:
+
+        # --------------------------------------------------
+        # Find user
+        # --------------------------------------------------
+
         user = db.scalar(
             select(User).where(User.email == email)
         )
 
         if not user:
+
             logger.warning(
                 "Login failed: user not found: %s",
                 email,
@@ -152,12 +271,18 @@ def login_user(user_data: UserLogin):
                 detail="Invalid email or password",
             )
 
+        # --------------------------------------------------
+        # Verify password
+        # --------------------------------------------------
+
         if not verify_password(
             user_data.password,
             user.hashed_password,
         ):
+
             logger.warning(
-                "Login failed: invalid password for email: %s",
+                "Login failed: invalid password "
+                "for email: %s",
                 email,
             )
 
@@ -165,6 +290,10 @@ def login_user(user_data: UserLogin):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
+
+        # --------------------------------------------------
+        # Create access token
+        # --------------------------------------------------
 
         access_token = create_access_token(
             {
@@ -175,7 +304,8 @@ def login_user(user_data: UserLogin):
         )
 
         logger.info(
-            "User login successful: user_id=%s role=%s",
+            "User login successful: "
+            "user_id=%s role=%s",
             user.id,
             user.role.value,
         )
@@ -189,6 +319,10 @@ def login_user(user_data: UserLogin):
         db.close()
 
 
+# --------------------------------------------------
+# Current authenticated user
+# --------------------------------------------------
+
 @app.get(
     "/users/me",
     response_model=UserResponse,
@@ -196,6 +330,7 @@ def login_user(user_data: UserLogin):
 def get_me(
     current_user: User = Depends(get_current_user),
 ):
+
     logger.info(
         "Current user requested: user_id=%s",
         current_user.id,

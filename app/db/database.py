@@ -19,7 +19,7 @@ if not DATABASE_URL:
 # postgres://...
 #
 # This project uses Psycopg 3, so explicitly use:
-# postgresql+psycopg://...
+# postgresql+psycopg://
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace(
@@ -57,3 +57,19 @@ SessionLocal = sessionmaker(
 
 
 Base = declarative_base()
+
+
+def init_db():
+    """
+    Initialize database tables.
+
+    SQLAlchemy creates tables that do not already exist.
+    Existing tables are not modified or deleted.
+    """
+
+    # Import models so SQLAlchemy registers them
+    # with Base.metadata before create_all() runs.
+    from app.models.ticket import Ticket  # noqa: F401
+    from app.models.user import User  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
