@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_roles
 from app.db.database import SessionLocal
 from app.models.enums import UserRole
 from app.models.ticket import Ticket
@@ -22,7 +22,14 @@ router = APIRouter(
 )
 def create_ticket(
     ticket_data: TicketCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.MANAGER,
+            UserRole.LEAD,
+            UserRole.DEV,
+            UserRole.CLIENT,
+        )
+    ),
 ):
     db = SessionLocal()
 
@@ -55,9 +62,16 @@ def list_tickets(
     try:
         query = select(Ticket)
 
-        if current_user.role == UserRole.CLIENT:
-            query = query.where(Ticket.owner_id == current_user.id)
+        # Clients and developers can only see their own tickets.
+        if current_user.role in (
+            UserRole.CLIENT,
+            UserRole.DEV,
+        ):
+            query = query.where(
+                Ticket.owner_id == current_user.id
+            )
 
+        # Managers and leads can see all tickets.
         tickets = db.scalars(query).all()
 
         return tickets
@@ -87,8 +101,12 @@ def get_ticket(
                 detail="Ticket not found",
             )
 
+        # Developers and clients can only view their own tickets.
         if (
-            current_user.role == UserRole.CLIENT
+            current_user.role in (
+                UserRole.CLIENT,
+                UserRole.DEV,
+            )
             and ticket.owner_id != current_user.id
         ):
             raise HTTPException(
@@ -109,7 +127,13 @@ def get_ticket(
 def update_ticket(
     ticket_id: int,
     ticket_data: TicketUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.MANAGER,
+            UserRole.LEAD,
+            UserRole.DEV,
+        )
+    ),
 ):
     db = SessionLocal()
 
@@ -124,8 +148,9 @@ def update_ticket(
                 detail="Ticket not found",
             )
 
+        # Developers can update only their own tickets.
         if (
-            current_user.role == UserRole.CLIENT
+            current_user.role == UserRole.DEV
             and ticket.owner_id != current_user.id
         ):
             raise HTTPException(
@@ -157,7 +182,9 @@ def update_ticket(
 )
 def delete_ticket(
     ticket_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_roles(UserRole.MANAGER)
+    ),
 ):
     db = SessionLocal()
 
@@ -170,15 +197,6 @@ def delete_ticket(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Ticket not found",
-            )
-
-        if (
-            current_user.role == UserRole.CLIENT
-            and ticket.owner_id != current_user.id
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You cannot delete this ticket",
             )
 
         db.delete(ticket)
