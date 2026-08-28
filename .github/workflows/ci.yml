@@ -50,5 +50,6 @@ jobs:
           python -c "from app.db.init_db import create_tables; create_tables(); print('Tables created successfully')"
 
       - name: Run tests
-        run: |
-          python -m pytest -v
+        env:
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: python -m pytest -v
