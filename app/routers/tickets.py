@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
@@ -13,6 +15,9 @@ router = APIRouter(
     prefix="/tickets",
     tags=["tickets"],
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -44,7 +49,21 @@ def create_ticket(
         db.commit()
         db.refresh(ticket)
 
+        logger.info(
+            "Ticket created: ticket_id=%s user_id=%s role=%s",
+            ticket.id,
+            current_user.id,
+            current_user.role.value,
+        )
+
         return ticket
+
+    except Exception:
+        logger.exception(
+            "Failed to create ticket: user_id=%s",
+            current_user.id,
+        )
+        raise
 
     finally:
         db.close()
@@ -74,6 +93,13 @@ def list_tickets(
         # Managers and leads can see all tickets.
         tickets = db.scalars(query).all()
 
+        logger.info(
+            "Tickets listed: user_id=%s role=%s count=%s",
+            current_user.id,
+            current_user.role.value,
+            len(tickets),
+        )
+
         return tickets
 
     finally:
@@ -96,6 +122,12 @@ def get_ticket(
         )
 
         if not ticket:
+            logger.warning(
+                "Ticket not found: ticket_id=%s user_id=%s",
+                ticket_id,
+                current_user.id,
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Ticket not found",
@@ -109,10 +141,22 @@ def get_ticket(
             )
             and ticket.owner_id != current_user.id
         ):
+            logger.warning(
+                "Unauthorized ticket access: ticket_id=%s user_id=%s",
+                ticket_id,
+                current_user.id,
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Ticket not found",
             )
+
+        logger.info(
+            "Ticket viewed: ticket_id=%s user_id=%s",
+            ticket_id,
+            current_user.id,
+        )
 
         return ticket
 
@@ -143,6 +187,12 @@ def update_ticket(
         )
 
         if not ticket:
+            logger.warning(
+                "Update failed: ticket not found: ticket_id=%s user_id=%s",
+                ticket_id,
+                current_user.id,
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Ticket not found",
@@ -153,6 +203,12 @@ def update_ticket(
             current_user.role == UserRole.DEV
             and ticket.owner_id != current_user.id
         ):
+            logger.warning(
+                "Unauthorized ticket update: ticket_id=%s user_id=%s",
+                ticket_id,
+                current_user.id,
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You cannot update this ticket",
@@ -170,7 +226,24 @@ def update_ticket(
         db.commit()
         db.refresh(ticket)
 
+        logger.info(
+            "Ticket updated: ticket_id=%s user_id=%s",
+            ticket.id,
+            current_user.id,
+        )
+
         return ticket
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        logger.exception(
+            "Failed to update ticket: ticket_id=%s user_id=%s",
+            ticket_id,
+            current_user.id,
+        )
+        raise
 
     finally:
         db.close()
@@ -194,6 +267,12 @@ def delete_ticket(
         )
 
         if not ticket:
+            logger.warning(
+                "Delete failed: ticket not found: ticket_id=%s user_id=%s",
+                ticket_id,
+                current_user.id,
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Ticket not found",
@@ -201,6 +280,23 @@ def delete_ticket(
 
         db.delete(ticket)
         db.commit()
+
+        logger.info(
+            "Ticket deleted: ticket_id=%s user_id=%s",
+            ticket_id,
+            current_user.id,
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        logger.exception(
+            "Failed to delete ticket: ticket_id=%s user_id=%s",
+            ticket_id,
+            current_user.id,
+        )
+        raise
 
     finally:
         db.close()
